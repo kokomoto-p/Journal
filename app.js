@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.4';
+const APP_VERSION = '2026-10-28.5';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

@@ -1,4 +1,4 @@
-const CACHE = 'journal-v4';
+const CACHE = 'journal-v5';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
