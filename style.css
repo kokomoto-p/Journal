@@ -62,6 +62,7 @@ main { max-width: 980px; margin: 0 auto; padding: 16px 20px 80px; }
 /* ---------- photo calendar ---------- */
 .pc-dow { position: sticky; top: 58px; z-index: 2; display: grid; grid-template-columns: repeat(7, 1fr);
   text-align: center; font-size: .8rem; color: var(--muted); background: var(--bg); padding: 6px 0; }
+#view-calendar { max-width: 760px; margin: 0 auto; }
 .pc-month h3 { text-align: center; margin: 18px 0 8px; font-weight: 600; }
 .pc-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .pc-day { position: relative; aspect-ratio: 1; border-radius: 4px; background: var(--card);
@@ -71,7 +72,12 @@ main { max-width: 980px; margin: 0 auto; padding: 16px 20px 80px; }
 .pc-day.blank { background: transparent; cursor: default; }
 .pc-day.blank:hover { outline: 0; }
 .pc-day.entry { background-color: var(--day); color: var(--day-text); font-weight: 600; }
-.pc-day.photo { color: #fff; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+/* Photo days: the photo fills the tile; the date sits small in the corner on a soft shade. */
+.pc-day.photo { color: #fff; font-weight: 600; font-size: .78rem; align-items: flex-start; justify-content: flex-start;
+  background-color: var(--panel); overflow: hidden; }
+.pc-day.photo::before { content: ""; position: absolute; left: 0; top: 0; width: 70%; height: 50%; pointer-events: none;
+  background: radial-gradient(circle at 0 0, rgba(0,0,0,.45), rgba(0,0,0,0) 70%); }
+.pc-day.photo span { position: relative; padding: 4px 6px; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
 .pc-day.today::after { content: ""; position: absolute; inset: 3px; border: 2px solid var(--accent); border-radius: 3px; pointer-events: none; }
 
 /* ---------- entry editor ---------- */

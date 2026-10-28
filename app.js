@@ -74,24 +74,30 @@ const isEmpty = e => !e.title.trim() && !e.text.trim() && !e.mood && !e.tags.len
 const highlightOf = e => (e.highlight && e.photoIds.includes(e.highlight)) ? e.highlight : (e.photoIds[0] || null);
 
 /* ===================== thumbnails ===================== */
-const thumbUrls = new Map();       // photoId -> object URL (small JPEG)
+const thumbUrls = new Map();       // photoId -> object URL (square JPEG)
+const THUMB_V = 2, THUMB_PX = 640;  // square, center-cropped; sharp on large calendar tiles and retina screens
 async function makeThumb(blob) {
-  const bmp = await createImageBitmap(blob);
-  const s = Math.min(1, 480 / Math.max(bmp.width, bmp.height));
+  let bmp;
+  try { bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
+  catch (_) { bmp = await createImageBitmap(blob); }
+  const side = Math.min(bmp.width, bmp.height);
+  const out = Math.min(THUMB_PX, side);
   const c = document.createElement('canvas');
-  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  c.width = c.height = out;
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, out, out);
   bmp.close && bmp.close();
-  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.86));
 }
 async function thumbUrl(pid) {
   if (!pid) return null;
   if (thumbUrls.has(pid)) return thumbUrls.get(pid);
   let rec = await dbGet('thumbs', pid);
-  if (!rec) {
+  if (!rec || rec.v !== THUMB_V) {               // older, smaller thumbs get rebuilt
     const p = await dbGet('photos', pid);
     if (!p) return null;
-    try { rec = { id: pid, blob: await makeThumb(p.blob) }; } catch (_) { rec = { id: pid, blob: p.blob }; }
+    try { rec = { id: pid, v: THUMB_V, blob: await makeThumb(p.blob) }; } catch (_) { rec = { id: pid, v: THUMB_V, blob: p.blob }; }
     await dbPut('thumbs', rec);
   }
   const url = URL.createObjectURL(rec.blob);
@@ -271,7 +277,7 @@ function renderPhotoCalendar(scrollToToday) {
       const e = cache.get(s);
       const pid = e && highlightOf(e);
       const cls = ['pc-day', e ? (pid ? 'photo' : 'entry') : '', s === t ? 'today' : ''].filter(Boolean).join(' ');
-      cells += `<div class="${cls}" data-date="${s}"${pid ? ` data-thumb="${esc(pid)}"` : ''}>${d}</div>`;
+      cells += `<div class="${cls}" data-date="${s}"${pid ? ` data-thumb="${esc(pid)}"` : ''}>${pid ? `<span>${d}</span>` : d}</div>`;
     }
     html += `<section class="pc-month" id="m-${y}-${pad(m + 1)}"><h3>${esc(label)}</h3><div class="pc-grid">${cells}</div></section>`;
     if (++m > 11) { m = 0; y++; }
