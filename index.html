@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Journal</title>
+  <meta name="theme-color" content="#2b2d42">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="side-head">
+      <h1>Journal</h1>
+      <button id="btnSettings" class="icon" title="Settings" aria-label="Settings">&#9881;</button>
+    </div>
+    <div id="syncBar" class="sync-bar" hidden>
+      <span id="syncStatus"></span>
+      <button id="btnSync" class="link">Sync now</button>
+    </div>
+    <input id="search" type="search" placeholder="Search entries or #tags">
+    <div id="results" hidden></div>
+    <div id="calWrap">
+      <div class="cal-head">
+        <button id="prevMonth" class="icon" aria-label="Previous month">&lsaquo;</button>
+        <strong id="monthLabel"></strong>
+        <button id="nextMonth" class="icon" aria-label="Next month">&rsaquo;</button>
+      </div>
+      <div id="cal"></div>
+      <button id="btnToday" class="link">Jump to today</button>
+    </div>
+    <section id="otd">
+      <h3>On this day</h3>
+      <ul id="otdList"></ul>
+    </section>
+  </aside>
+
+  <main id="main">
+    <header class="topbar">
+      <button id="btnMenu" class="icon menu" aria-label="Toggle sidebar">&#9776;</button>
+      <button id="prevDay" class="icon" aria-label="Previous day">&lsaquo;</button>
+      <h2 id="dateLabel"></h2>
+      <button id="nextDay" class="icon" aria-label="Next day">&rsaquo;</button>
+      <span id="status" class="status"></span>
+    </header>
+
+    <input id="title" class="title" placeholder="Title (optional)">
+
+    <div class="meta">
+      <div id="mood" class="mood" role="radiogroup" aria-label="Mood"></div>
+      <input id="tags" placeholder="tags, comma separated">
+    </div>
+
+    <div class="toolbar" id="toolbar">
+      <button data-cmd="bold" title="Bold"><b>B</b></button>
+      <button data-cmd="italic" title="Italic"><i>I</i></button>
+      <button data-cmd="underline" title="Underline"><u>U</u></button>
+      <button data-cmd="formatBlock" data-val="h3" title="Heading">H</button>
+      <button data-cmd="insertUnorderedList" title="Bullets">&bull;</button>
+      <button data-cmd="insertOrderedList" title="Numbered">1.</button>
+      <button data-cmd="formatBlock" data-val="blockquote" title="Quote">&ldquo;</button>
+      <button data-cmd="removeFormat" title="Clear formatting">&#10005;</button>
+    </div>
+    <div id="editor" class="editor" contenteditable="true" data-placeholder="What happened today?"></div>
+
+    <section class="block">
+      <div class="block-head">
+        <h3>Events</h3>
+        <button id="btnEvents">Link calendar events</button>
+      </div>
+      <div id="eventPicker" hidden></div>
+      <ul id="eventList" class="chips"></ul>
+    </section>
+
+    <section class="block">
+      <div class="block-head">
+        <h3>Photos</h3>
+        <button id="btnPhotos">Add from Google Photos</button>
+      </div>
+      <div id="photoGrid" class="grid"></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h3>Settings</h3>
+    <label>Google OAuth client ID
+      <input id="clientId" placeholder="xxxx.apps.googleusercontent.com">
+    </label>
+    <p class="hint">Needed for Calendar, Photos and sync. See README for setup. Stored only in this browser.</p>
+    <label class="check"><input type="checkbox" id="syncToggle"> Sync entries across devices with Google Drive</label>
+    <p class="hint">Saves to a hidden app folder in your Drive. Turn this on, with the same client ID, on each device.</p>
+    <div class="row">
+      <button type="button" id="btnExport">Export all (JSON)</button>
+      <button type="button" id="btnImport">Import JSON</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+    </div>
+    <p id="settingsMsg" class="hint"></p>
+    <div class="row end">
+      <button value="cancel">Close</button>
+      <button id="btnSaveSettings" value="ok" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="lightbox"><img id="lightImg" alt=""><form method="dialog"><button>Close</button></form></dialog>
+<div id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
