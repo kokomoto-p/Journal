@@ -2,48 +2,63 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>Journal</title>
   <meta name="theme-color" content="#2b2d42">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
   <link rel="stylesheet" href="style.css">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-<div id="app">
-  <aside id="side">
-    <div class="side-head">
-      <h1>Journal</h1>
-      <button id="btnSettings" class="icon" title="Settings" aria-label="Settings">&#9881;</button>
-    </div>
-    <div id="syncBar" class="sync-bar" hidden>
+<header class="appbar">
+  <div class="brand">Journal</div>
+  <nav class="tabs" aria-label="Views">
+    <a href="#/timeline" data-view="timeline">Timeline</a>
+    <a href="#/calendar" data-view="calendar">Calendar</a>
+    <a href="#/map" data-view="map">Map</a>
+  </nav>
+  <div class="actions">
+    <span id="syncBar" class="sync-bar" hidden>
       <span id="syncStatus"></span>
-      <button id="btnSync" class="link">Sync now</button>
-    </div>
-    <input id="search" type="search" placeholder="Search entries or #tags">
-    <div id="results" hidden></div>
-    <div id="calWrap">
-      <div class="cal-head">
-        <button id="prevMonth" class="icon" aria-label="Previous month">&lsaquo;</button>
-        <strong id="monthLabel"></strong>
-        <button id="nextMonth" class="icon" aria-label="Next month">&rsaquo;</button>
-      </div>
-      <div id="cal"></div>
-      <button id="btnToday" class="link">Jump to today</button>
-    </div>
-    <section id="otd">
-      <h3>On this day</h3>
-      <ul id="otdList"></ul>
-    </section>
-  </aside>
+      <button id="btnSync" class="icon" title="Sync now" aria-label="Sync now">&#10227;</button>
+    </span>
+    <button id="btnToday" class="primary" title="Open today's entry" aria-label="Today's entry">+<span class="lbl"> Today</span></button>
+    <button id="btnSettings" class="icon" title="Settings" aria-label="Settings">&#9881;</button>
+  </div>
+</header>
 
-  <main id="main">
+<main>
+  <!-- ============ Timeline ============ -->
+  <section id="view-timeline" class="view">
+    <div class="tl-tools">
+      <input id="search" type="search" placeholder="Search entries, events or #tags">
+    </div>
+    <div id="timeline"></div>
+    <div id="tlSentinel" aria-hidden="true"></div>
+  </section>
+
+  <!-- ============ Calendar ============ -->
+  <section id="view-calendar" class="view" hidden>
+    <div class="pc-dow"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+    <div id="months"></div>
+  </section>
+
+  <!-- ============ Map ============ -->
+  <section id="view-map" class="view map-view" hidden>
+    <div id="map"></div>
+    <div id="mapMsg" class="map-msg" hidden></div>
+  </section>
+
+  <!-- ============ Entry editor ============ -->
+  <section id="view-entry" class="view entry" hidden>
     <header class="topbar">
-      <button id="btnMenu" class="icon menu" aria-label="Toggle sidebar">&#9776;</button>
+      <a id="btnBack" class="back" href="#/timeline">&lsaquo; Back</a>
       <button id="prevDay" class="icon" aria-label="Previous day">&lsaquo;</button>
       <h2 id="dateLabel"></h2>
       <button id="nextDay" class="icon" aria-label="Next day">&rsaquo;</button>
+      <input id="jumpDate" type="date" aria-label="Go to date">
       <span id="status" class="status"></span>
     </header>
 
@@ -68,6 +83,24 @@
 
     <section class="block">
       <div class="block-head">
+        <h3>Photos</h3>
+        <button id="btnPhotos">Add from Google Photos</button>
+      </div>
+      <p class="hint" id="photoHint" hidden>Tap &#9733; on a photo to make it this day's highlight in the calendar.</p>
+      <div id="photoGrid" class="grid"></div>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h3>Places</h3></div>
+      <div class="place-search">
+        <input id="placeSearch" type="search" placeholder="Search for a place or address" autocomplete="off">
+        <ul id="placeSuggest" class="suggest" hidden></ul>
+      </div>
+      <ul id="placeList" class="chips"></ul>
+    </section>
+
+    <section class="block">
+      <div class="block-head">
         <h3>Events</h3>
         <button id="btnEvents">Link calendar events</button>
       </div>
@@ -75,15 +108,12 @@
       <ul id="eventList" class="chips"></ul>
     </section>
 
-    <section class="block">
-      <div class="block-head">
-        <h3>Photos</h3>
-        <button id="btnPhotos">Add from Google Photos</button>
-      </div>
-      <div id="photoGrid" class="grid"></div>
+    <section class="block" id="otd">
+      <h3>On this day</h3>
+      <ul id="otdList" class="otd"></ul>
     </section>
-  </main>
-</div>
+  </section>
+</main>
 
 <dialog id="settings">
   <form method="dialog">
@@ -92,6 +122,10 @@
       <input id="clientId" placeholder="xxxx.apps.googleusercontent.com">
     </label>
     <p class="hint">Needed for Calendar, Photos and sync. See README for setup. Stored only in this browser.</p>
+    <label>Google Maps API key
+      <input id="mapsKey" placeholder="AIza…">
+    </label>
+    <p class="hint">For the Map tab and place search. See README for how to keep it free.</p>
     <label class="check"><input type="checkbox" id="syncToggle"> Sync entries across devices with Google Drive</label>
     <p class="hint">Saves to a hidden app folder in your Drive. Turn this on, with the same client ID, on each device.</p>
     <div class="row">

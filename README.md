@@ -1,49 +1,77 @@
-# Journal (Diarium-style PWA)
+# Journal
 
-Local-first journaling web app. Entries live in your browser (IndexedDB). Google is used only to pull in
-calendar events and photos you explicitly pick.
+A personal journaling web app. Entries live in your browser (IndexedDB) and sync between your devices
+through a hidden folder in your own Google Drive. Google Calendar, Google Photos and Google Maps are used
+only for the things you explicitly link, pick or search.
+
+Live at https://kokomoto-p.github.io/Journal/
 
 ## Features
-- One entry per day: title, rich text, mood, tags
-- Month calendar with dots on days that have entries, prev/next day, jump to today
-- "On this day" shows entries from past years
-- Search text, event names, and `#tags`
+- **Timeline:** scroll through all entries, newest first, grouped by month, with title, preview, mood, tags,
+  places and a photo
+- **Calendar:** scrolling months where each day shows its highlight photo (tap the star on a photo to choose
+  it; otherwise the first photo is used). Days with an entry but no photo are shaded.
+- **Map:** every place you've added to an entry, shown as photo pins that group together as you zoom out
+- One entry per day: title, rich text, mood, tags, places, photos, linked calendar events
+- "On this day" shows the same date in other years
+- Search text, places, event names and `#tags`
 - Link Google Calendar events for the day (read-only)
-- Attach photos via the Google Photos Picker (photos are copied into the app, so they work offline)
-- Sync across devices through a hidden app folder in your own Google Drive
+- Add photos with the Google Photos picker (copied into the app, so they work offline)
+- Sync across devices through Google Drive
 - Export / import everything as JSON (photos included)
-- Installable PWA, works offline for existing entries
+- Installable on phone and desktop, works offline for existing entries
 
-## Run it
+## Run it locally
 No build step. From this folder:
 
     python3 -m http.server 8080
 
-Open http://localhost:8080. (Google sign-in requires `http://localhost` or HTTPS, not `file://`.)
+Open http://localhost:8080. (Google sign-in needs `http://localhost` or HTTPS, not `file://`.)
 
-## Google setup (about 10 minutes)
+## Google setup: sign-in, Calendar, Photos, Drive (about 10 minutes)
 1. Go to https://console.cloud.google.com and create a project.
-2. APIs & Services > Library: enable **Google Calendar API**, **Google Photos Picker API** and
-   **Google Drive API**.
-3. APIs & Services > OAuth consent screen: choose External, fill in the basics, and add yourself under
-   **Test users**. Add these scopes:
-   - `.../auth/calendar.events.readonly`
-   - `.../auth/photospicker.mediaitems.readonly`
-   - `.../auth/drive.appdata` (only lets the app see its own hidden folder, not your other Drive files)
-4. Credentials > Create credentials > **OAuth client ID** > Web application.
-   Under **Authorized JavaScript origins** add `http://localhost:8080` (and your deployed URL later).
-5. Copy the client ID, open the app, click the gear icon, paste it, Save.
+2. APIs & Services > Library: enable **Google Calendar API**, **Photos Picker API** and **Google Drive API**.
+3. APIs & Services > OAuth consent screen (Google Auth Platform): choose External, fill in the basics, and
+   add yourself under **Audience > Test users**. Under **Data Access**, add these scopes:
+   - `https://www.googleapis.com/auth/calendar.events.readonly`
+   - `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`
+   - `https://www.googleapis.com/auth/drive.appdata` (only the app's own hidden folder, not your other files)
+4. **Clients > Create client > Web application.** Under **Authorized JavaScript origins** add
+   `https://kokomoto-p.github.io` (and `http://localhost:8080` for local testing).
+5. Copy the client ID, open the app, click the gear, paste it, Save.
 
-While the consent screen is in "Testing" mode, Google expires the authorization every 7 days and shows an
-"unverified app" warning. That is fine for personal use.
+While the app is in "Testing" mode, Google shows an "unverified app" warning and asks you to re-approve
+every 7 days. That's fine for personal use.
 
-## Notes on how Google access works
-- Photos: Google no longer lets apps browse your whole library. The Picker opens in a Google tab, you choose
-  photos, and the app receives just those. Photo URLs expire after about an hour, so the app downloads and
-  stores the image data right away. Videos are skipped.
-- Calendar: reads events from your primary calendar for the day you are viewing, and you choose which to link.
-  Linked events are saved into the entry, so they remain even if the calendar event changes later.
-- Tokens are kept in memory only; you may be asked to re-approve after a page reload.
+## Google Maps setup: Map tab and place search (about 5 minutes)
+Google Maps needs an API key on a project with billing turned on, but every account gets a free monthly
+allowance per request type: 10,000 map loads, 10,000 place-search requests and 10,000 place lookups
+(see https://developers.google.com/maps/billing-and-pricing/pricing). A personal journal uses a tiny
+fraction of that. The app is built to stay small:
+- The Maps script loads only when you open the Map tab or search for a place.
+- The map is created once per app session, which counts as one map load.
+- Place search waits until you pause typing, needs 3+ characters, groups each search into one session,
+  and only asks for location and address.
+
+Steps:
+1. In the same Cloud project, APIs & Services > Library: enable **Maps JavaScript API** and
+   **Places API (New)**.
+2. APIs & Services > Credentials > **Create credentials > API key**.
+3. Edit the key so it can't be used anywhere else:
+   - **Application restrictions:** Websites, then add `https://kokomoto-p.github.io/*`
+     (and `http://localhost:8080/*` if you test locally)
+   - **API restrictions:** Restrict key, then tick **Maps JavaScript API** and **Places API (New)**
+4. Paste the key into the app's Settings under "Google Maps API key" and Save.
+
+Optional extra safety:
+- **Budget alert:** Billing > Budgets & alerts > create a budget of $1 with email alerts. This doesn't stop
+  charges by itself, but you'd hear about anything unexpected right away.
+- **Quota caps (a hard stop):** APIs & Services > Maps JavaScript API > Quotas, and the same for
+  Places API (New). Lower the per-day or per-minute limits to something small. Requests past the cap
+  fail instead of being billed.
+
+Note: Google Photos removes location data from photos it shares with apps, so pins come from the places
+you add to each entry, not from photo GPS.
 
 ## Syncing between computer and phone
 1. Settings (gear) > tick **Sync entries across devices with Google Drive** > Save, then approve the
@@ -51,24 +79,23 @@ While the consent screen is in "Testing" mode, Google expires the authorization 
 2. Do the same on your other device (same client ID).
 
 The app syncs when it opens, a few seconds after you stop typing, when you switch back to it, and
-every 5 minutes while it's open. "Sync now" in the sidebar forces one.
+every 5 minutes while it's open. The ⟳ button in the top bar forces a sync.
 
-How conflicts work: each day's entry is synced as a whole, and the most recently edited version wins.
-If you edit the same day on two devices before either syncs, the older edit is replaced. Deleting all
-of an entry's content deletes it everywhere.
+Each day's entry syncs as a whole, and the most recent edit wins. If you edit the same day on two
+devices before either syncs, the older edit is replaced. Clearing all of an entry's content deletes it
+everywhere.
 
-Google access tokens last about an hour. After that, background sync pauses and the sidebar says
-"Tap Sync now to sign in"; one tap gets a fresh token. (While the consent screen is in Testing mode,
-Google also asks you to re-approve the app every 7 days.)
+Google access tokens last about an hour. After that, background sync pauses until you tap ⟳.
 
-## Deploying to use on your phone
-Host the folder on any static HTTPS host (GitHub Pages, Netlify, Cloudflare Pages), add that URL to the
-OAuth client's authorized origins, then "Add to Home Screen". Each origin (localhost vs. your hosted URL)
-has its own local storage, so turn sync on in each and they'll converge through Drive.
+## Installing
+- **Computer (Chrome/Edge):** open the site and click the install icon in the address bar.
+- **iPhone:** open the site in Safari > Share > Add to Home Screen. The home-screen app has its own storage,
+  so set up the gear settings inside it.
+- **Android:** open the site in Chrome > ⋮ > Install app.
 
 ## Ideas for next steps
-- Multiple entries per day and times
+- Import Google Maps Timeline exports to fill in places automatically
+- Multiple entries per day
 - Insert photos inline in the text
-- Encrypted export / app lock
-- Location and weather per entry
+- App lock / encrypted export
 - Field-level merge for same-day edits on two devices
