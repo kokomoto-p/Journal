@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.5';
+const APP_VERSION = '2026-10-28.6';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -333,7 +333,7 @@ function renderOnThisDay() {
 }
 
 /* ===================== Google auth ===================== */
-let tokenClient = null, token = null, tokenExp = 0, pending = null;
+let tokenClient = null, token = null, tokenExp = 0, pending = null, forceConsent = false;
 try {
   const s = JSON.parse(ls.get('gtoken') || 'null');
   if (s && s.exp > Date.now() + 60000) { token = s.t; tokenExp = s.exp; }
@@ -370,7 +370,8 @@ function getToken(interactive = true) {
       tokenClient._cid = cid;
     }
     pending = { resolve, reject };
-    tokenClient.requestAccessToken();
+    tokenClient.requestAccessToken(forceConsent ? { prompt: 'consent' } : {});
+    forceConsent = false;
   });
 }
 
@@ -723,7 +724,28 @@ const DRIVE_UP = 'https://www.googleapis.com/upload/drive/v3/files';
 const syncOn = () => ls.get('sync') === '1';
 let syncing = false, syncAgain = false, syncTimer = null;
 
-function setSyncStatus(s) { $('#syncStatus').textContent = s; $('#btnSync').title = s || 'Sync now'; }
+const syncInfo = { state: '', when: null, error: '', email: '', remote: null, local: 0 };
+function setSyncStatus(s, state = '') {
+  $('#syncStatus').textContent = s;
+  $('#btnSync').title = s || 'Sync now';
+  $('#btnSync').classList.toggle('err', state === 'err');
+  $('#btnSync').classList.toggle('spin', state === 'busy');
+  syncInfo.state = state;
+  renderSyncInfo();
+}
+function renderSyncInfo() {
+  const el = $('#syncInfo');
+  if (!el) return;
+  if (!syncOn()) { el.textContent = ''; return; }
+  const parts = [];
+  if (syncInfo.email) parts.push(`Syncing as ${syncInfo.email}.`);
+  if (syncInfo.remote !== null) parts.push(`${syncInfo.remote} entr${syncInfo.remote === 1 ? 'y' : 'ies'} in Drive, ${cache.size} on this device.`);
+  if (syncInfo.when) parts.push(`Last synced ${syncInfo.when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`);
+  if (syncInfo.error) parts.push(`Last problem: ${syncInfo.error}`);
+  if (!parts.length) parts.push('Not synced yet on this device. Tap ⟳ in the top bar.');
+  el.textContent = parts.join(' ');
+  el.classList.toggle('bad', !!syncInfo.error);
+}
 function renderSyncBar() { $('#syncBar').hidden = !syncOn(); }
 function queueSync(delay = 4000) {
   if (!syncOn()) return;
@@ -767,10 +789,15 @@ async function sync(interactive = false) {
   if (syncing) { syncAgain = true; return; }
   syncing = true;
   clearTimeout(syncTimer);
-  setSyncStatus('Syncing…');
+  setSyncStatus('Syncing…', 'busy');
+  let photoFails = 0;
   try {
     await saveNow(true);
     const editsAtStart = editCounter;
+    if (!syncInfo.email) {
+      gfetch('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)', {}, 'json', interactive)
+        .then(r => { syncInfo.email = r.user?.emailAddress || ''; renderSyncInfo(); }).catch(() => {});
+    }
     const files = await listRemote(interactive);
     const rEntries = new Map(), rPhotos = new Map();
     for (const f of files) {
@@ -778,6 +805,7 @@ async function sync(interactive = false) {
       else if (f.name.startsWith('photo-')) rPhotos.set(f.name.slice(6), f);
     }
     const remoteUpdated = f => Number(f?.appProperties?.updated || 0);
+    let created = 0;
 
     // 1. Pull entries that are newer on Drive.
     let curChanged = false, pulled = 0, pushed = 0;
@@ -792,6 +820,8 @@ async function sync(interactive = false) {
       pulled++;
       if (cur && id === cur.id) curChanged = true;
     }
+    // Show pulled entries right away; photos can take a while on a first sync.
+    if (pulled) { listsDirty = true; refreshListView(); if (interactive) toast(`Got ${pulled} entr${pulled === 1 ? 'y' : 'ies'} from Drive, downloading photos…`, 0); }
 
     // 2. Photos: download ones we're missing, upload ones Drive is missing.
     const needed = new Set();
@@ -800,10 +830,17 @@ async function sync(interactive = false) {
     for (const pid of needed) {
       if (localPhotos.has(pid) || !rPhotos.has(pid)) continue;
       const f = rPhotos.get(pid), ap = f.appProperties || {};
-      const blob = await gfetch(`${DRIVE}/${f.id}?alt=media`, {}, 'blob', interactive);
-      await dbPut('photos', { id: pid, blob, name: ap.name || '', mime: ap.mime || blob.type, takenAt: ap.takenAt || null });
-      localPhotos.add(pid);
+      try {
+        const blob = await gfetch(`${DRIVE}/${f.id}?alt=media`, {}, 'blob', interactive);
+        await dbPut('photos', { id: pid, blob, name: ap.name || '', mime: ap.mime || blob.type, takenAt: ap.takenAt || null });
+        localPhotos.add(pid);
+        if (thumbUrls.has(pid)) { URL.revokeObjectURL(thumbUrls.get(pid)); thumbUrls.delete(pid); }
+      } catch (err) {
+        if (err.code === 'NEED_AUTH' || /401|403/.test(err.message)) throw err;
+        photoFails++;                      // skip this one; it'll be retried next sync
+      }
     }
+    if (pulled) refreshListView();
     for (const pid of needed) {
       if (!localPhotos.has(pid) || rPhotos.has(pid)) continue;
       const p = await dbGet('photos', pid);
@@ -820,6 +857,7 @@ async function sync(interactive = false) {
       await driveUpload(f && f.id, `entry-${e.id}.json`, { updated: String(e.updated || 0) },
         JSON.stringify(e), 'application/json', interactive);
       pushed++;
+      if (!f) created++;
     }
 
     // 4. Refresh the open entry if it changed elsewhere and you haven't typed since.
@@ -838,15 +876,23 @@ async function sync(interactive = false) {
     for (const pid of localPhotos) if (!keep.has(pid)) await dropPhoto(pid);
 
     if (pulled) { listsDirty = true; refreshListView(); }
-    const when = new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    setSyncStatus(`Synced ${when}`);
-    if (interactive && (pulled || pushed)) toast(`Synced: ${pulled} down, ${pushed} up.`);
+    syncInfo.when = new Date();
+    syncInfo.error = photoFails ? `${photoFails} photo${photoFails === 1 ? '' : 's'} didn't download; will retry next sync.` : '';
+    syncInfo.remote = rEntries.size + created - tombs.size;   // entry files in Drive, minus deleted days
+    setSyncStatus(`Synced ${syncInfo.when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`, photoFails ? 'err' : '');
+    if (interactive) toast(pulled || pushed ? `Synced: ${pulled} down, ${pushed} up.` : `Up to date (${cache.size} entries).`);
   } catch (err) {
-    if (err.code === 'NEED_AUTH') setSyncStatus('Tap ⟳ to sign in');
+    if (err.code === 'NEED_AUTH') { syncInfo.error = 'Signed out. Tap ⟳ to sign in again.'; setSyncStatus('Tap ⟳ to sign in', 'err'); }
     else {
-      setSyncStatus('Sync failed');
+      let msg = err.message;
+      if (/insufficient|scope/i.test(msg)) {
+        msg = 'Google didn’t give the app Drive access. Tap ⟳ and tick every box on the Google screen.';
+        clearToken(); forceConsent = true;
+      }
+      syncInfo.error = msg;
+      setSyncStatus('Sync failed', 'err');
       console.warn('sync', err);
-      if (interactive) toast(err.message, 7000);
+      if (interactive) toast(msg, 9000);
     }
   } finally {
     syncing = false;
@@ -897,6 +943,7 @@ function openSettings() {
   $('#syncToggle').checked = syncOn();
   $('#settingsMsg').textContent = '';
   $('#appVersion').textContent = 'Version ' + APP_VERSION;
+  renderSyncInfo();
   const d = $('#settings');
   if (!d.open) d.showModal();
 }
