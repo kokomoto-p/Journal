@@ -8,6 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
+const APP_VERSION = '2026-10-28.4';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -895,6 +896,7 @@ function openSettings() {
   $('#mapsKey').value = ls.get('mapsKey') || '';
   $('#syncToggle').checked = syncOn();
   $('#settingsMsg').textContent = '';
+  $('#appVersion').textContent = 'Version ' + APP_VERSION;
   const d = $('#settings');
   if (!d.open) d.showModal();
 }
@@ -1027,6 +1029,18 @@ function wire() {
   await route();
   if (syncOn()) sync(false);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => { reg.update().catch(() => {}); })
+      .catch(() => {});
+    // When a new version takes over, reload once (unless you're mid-entry, then just say so).
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', async () => {
+      if (!hadController || reloaded) return;
+      if (view === 'entry') { toast('App updated. It will refresh next time you open it.', 5000); return; }
+      reloaded = true;
+      await saveNow();
+      location.reload();
+    });
   }
 })();

@@ -1,8 +1,11 @@
-const CACHE = 'journal-v3';
+const CACHE = 'journal-v4';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache so a new version never installs stale files.
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -13,17 +16,18 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Same-origin: network first, fall back to cache (so edits to the app show up). Everything else passes through.
+// Same-origin: always ask the server for the latest (it answers "not modified" cheaply when nothing
+// changed), fall back to the offline copy. GitHub Pages otherwise lets browsers reuse files for 10 min.
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  const key = url.pathname.endsWith('/') ? url.pathname + 'index.html' : url.pathname;
   e.respondWith(
-    fetch(e.request)
+    fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' })
       .then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy));
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(key, copy)); }
         return res;
       })
-      .catch(() => caches.match(e.request).then(r => r || caches.match('index.html')))
+      .catch(() => caches.match(key).then(r => r || caches.match(e.request)).then(r => r || caches.match('index.html')))
   );
 });
