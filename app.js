@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.6';
+const APP_VERSION = '2026-10-28.7';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -339,13 +339,58 @@ try {
   if (s && s.exp > Date.now() + 60000) { token = s.t; tokenExp = s.exp; }
 } catch (_) { /* ignore */ }
 function clearToken() { token = null; tokenExp = 0; ls.del('gtoken'); }
+const hasToken = () => !!token && Date.now() < tokenExp - 60000;
+function saveToken(t, expiresIn) {
+  token = t; tokenExp = Date.now() + Number(expiresIn) * 1000;
+  ls.set('gtoken', JSON.stringify({ t: token, exp: tokenExp }));
+}
 
-function getToken(interactive = true) {
+/* Installed (home-screen) apps can't use Google's pop-up sign-in: on Android the pop-up opens in a
+   separate tab that can't hand the result back. There, sign-in goes to Google's page and returns
+   to the app with the token in the URL instead. */
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');   // https://kokomoto-p.github.io/Journal/
+function redirectSignIn(after) {
+  const cid = ls.get('clientId');
+  const state = uuid();
+  ls.set('oauthState', JSON.stringify({ state, after, hash: location.hash || '#/timeline', at: Date.now() }));
+  const qs = new URLSearchParams({
+    client_id: cid, redirect_uri: REDIRECT_URI, response_type: 'token', scope: SCOPES,
+    include_granted_scopes: 'true', state, prompt: forceConsent ? 'consent' : 'select_account',
+  });
+  forceConsent = false;
+  location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + qs);
+}
+// Runs at startup: pick up a token (or error) Google sent back in the URL. Returns what to do next.
+function finishRedirectSignIn() {
+  const h = location.hash.slice(1);
+  if (!/(^|&)(access_token|error)=/.test(h)) return null;
+  const p = new URLSearchParams(h);
+  let saved = null;
+  try { saved = JSON.parse(ls.get('oauthState') || 'null'); } catch (_) { /* ignore */ }
+  ls.del('oauthState');
+  history.replaceState(null, '', location.pathname + ((saved && saved.hash) || '#/timeline'));
+  if (!saved || p.get('state') !== saved.state) return { error: 'Sign-in response didn’t match. Please try again.' };
+  if (p.get('error')) {
+    const err = p.get('error');
+    return { error: err === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in failed: ' + err };
+  }
+  const granted = (p.get('scope') || '').split(' ');
+  if (!granted.some(s => s.endsWith('drive.appdata'))) forceConsent = true;
+  saveToken(p.get('access_token'), p.get('expires_in') || 3600);
+  return { after: saved.after };
+}
+
+function getToken(interactive = true, after = '') {
   return new Promise((resolve, reject) => {
-    if (token && Date.now() < tokenExp - 60000) return resolve(token);
+    if (hasToken()) return resolve(token);
     if (!interactive) { const e = new Error('Sign-in needed'); e.code = 'NEED_AUTH'; return reject(e); }
     const cid = ls.get('clientId');
     if (!cid) { openSettings(); return reject(new Error('Add your Google client ID in Settings first.')); }
+    if (isInstalled()) {
+      saveNow().finally(() => redirectSignIn(after));
+      return reject(Object.assign(new Error('Signing in with Google…'), { code: 'REDIRECTING' }));
+    }
     if (!(window.google && google.accounts && google.accounts.oauth2)) {
       return reject(new Error('Google sign-in script not loaded (are you offline?).'));
     }
@@ -357,8 +402,7 @@ function getToken(interactive = true) {
           if (!pending) return;
           const p = pending; pending = null;
           if (r.error) return p.reject(new Error(r.error_description || r.error));
-          token = r.access_token; tokenExp = Date.now() + Number(r.expires_in) * 1000;
-          ls.set('gtoken', JSON.stringify({ t: token, exp: tokenExp }));
+          saveToken(r.access_token, r.expires_in);
           p.resolve(token);
         },
         error_callback: e => {
@@ -370,6 +414,13 @@ function getToken(interactive = true) {
       tokenClient._cid = cid;
     }
     pending = { resolve, reject };
+    // Safety net: if the pop-up never reports back, don't leave sync waiting forever.
+    const mine = pending;
+    setTimeout(() => {
+      if (pending !== mine) return;
+      pending = null;
+      reject(new Error('Google sign-in didn’t finish. Close the sign-in window and try again.'));
+    }, 120000);
     tokenClient.requestAccessToken(forceConsent ? { prompt: 'consent' } : {});
     forceConsent = false;
   });
@@ -429,7 +480,7 @@ async function loadEvents() {
     }));
     showEventPicker(items);
   } catch (err) {
-    toast(err.message, 6000);
+    if (err.code !== 'REDIRECTING') toast(err.message, 6000);
   } finally {
     btn.disabled = false;
   }
@@ -480,6 +531,8 @@ async function renderPhotos() {
 }
 
 async function pickPhotos() {
+  // In the installed app, sign in first (it leaves the app briefly); then tap the button again.
+  if (isInstalled() && !hasToken()) { getToken().catch(() => {}); return; }
   const btn = $('#btnPhotos');
   const win = window.open('', '_blank');   // open inside the click so popup blockers allow it
   btn.disabled = true;
@@ -527,7 +580,7 @@ async function pickPhotos() {
     toast(`Added ${added} photo${added === 1 ? '' : 's'}${skipped ? ` (${skipped} video${skipped === 1 ? '' : 's'} skipped)` : ''}.`);
   } catch (err) {
     if (win && !win.closed) { try { if (win.location.href === 'about:blank') win.close(); } catch (_) { /* cross-origin */ } }
-    toast(err.message, 7000);
+    if (err.code !== 'REDIRECTING') toast(err.message, 7000);
   } finally {
     btn.disabled = false;
   }
@@ -787,6 +840,12 @@ function driveUpload(existingId, name, appProperties, body, mime, interactive) {
 async function sync(interactive = false) {
   if (!syncOn()) return;
   if (syncing) { syncAgain = true; return; }
+  if (interactive && !hasToken() && isInstalled() && ls.get('clientId')) {
+    setSyncStatus('Signing in…', 'busy');
+    await saveNow(true);
+    redirectSignIn('sync');              // comes back to the app and syncs
+    return;
+  }
   syncing = true;
   clearTimeout(syncTimer);
   setSyncStatus('Syncing…', 'busy');
@@ -882,7 +941,8 @@ async function sync(interactive = false) {
     setSyncStatus(`Synced ${syncInfo.when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`, photoFails ? 'err' : '');
     if (interactive) toast(pulled || pushed ? `Synced: ${pulled} down, ${pushed} up.` : `Up to date (${cache.size} entries).`);
   } catch (err) {
-    if (err.code === 'NEED_AUTH') { syncInfo.error = 'Signed out. Tap ⟳ to sign in again.'; setSyncStatus('Tap ⟳ to sign in', 'err'); }
+    if (err.code === 'REDIRECTING') { /* leaving to sign in */ }
+    else if (err.code === 'NEED_AUTH') { syncInfo.error = 'Signed out. Tap ⟳ to sign in again.'; setSyncStatus('Tap ⟳ to sign in', 'err'); }
     else {
       let msg = err.message;
       if (/insufficient|scope/i.test(msg)) {
@@ -1073,8 +1133,12 @@ function wire() {
     if (e.deleted) tombs.set(e.id, e); else cache.set(e.id, norm(e));
   }
   renderSyncBar();
+  const signIn = finishRedirectSignIn();   // back from Google's sign-in page?
   await route();
-  if (syncOn()) sync(false);
+  if (signIn && signIn.error) toast(signIn.error, 7000);
+  else if (signIn && signIn.after === 'sync') sync(true);
+  else if (signIn) toast('Signed in to Google. Tap the button again to continue.', 5000);
+  if (syncOn() && !(signIn && signIn.after === 'sync')) sync(false);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
