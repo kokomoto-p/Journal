@@ -42,6 +42,7 @@ input { background: var(--card); border: 1px solid var(--border); border-radius:
 .sync-info { background: var(--panel); border-radius: 8px; padding: 8px 10px; }
 .sync-info:empty { display: none; }
 .sync-info.bad { color: #d64545; }
+.auth-log { white-space: pre-wrap; font-size: .75rem; background: var(--panel); padding: 8px; border-radius: 8px; max-width: 80vw; }
 
 main { max-width: 980px; margin: 0 auto; padding: 16px 20px 80px; }
 

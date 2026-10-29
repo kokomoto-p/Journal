@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.8';
+const APP_VERSION = '2026-10-28.9';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -355,6 +355,21 @@ function saveToken(t, expiresIn) {
    separate tab that can't hand the result back. There, sign-in goes to Google's page and returns
    to the app with the token in the URL instead. */
 const isInstalled = () => matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+// Small sign-in log (no tokens or personal data), shown in Settings to diagnose sign-in on phones.
+function authLog(msg) {
+  let log = [];
+  try { log = JSON.parse(ls.get('authLog') || '[]'); } catch (_) { /* ignore */ }
+  const t = new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  log.push(`${t} ${msg}`);
+  ls.set('authLog', JSON.stringify(log.slice(-14)));
+}
+(() => {
+  const h = location.hash;
+  const kind = /access_token=/.test(h) ? 'with sign-in token' : /error=/.test(h) ? 'with sign-in error' : h ? 'at ' + h.split('?')[0] : 'with no address';
+  const mode = ['standalone', 'minimal-ui', 'fullscreen', 'browser'].find(m => matchMedia(`(display-mode: ${m})`).matches) || '?';
+  authLog(`opened ${kind} · ${mode} · v${APP_VERSION}${document.referrer ? ' · from ' + new URL(document.referrer).host : ''}`);
+})();
 const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');   // https://kokomoto-p.github.io/Journal/
 function redirectSignIn(after) {
   const cid = ls.get('clientId');
@@ -370,6 +385,7 @@ function redirectSignIn(after) {
   else if (email) qs.set('login_hint', email);
   else qs.set('prompt', 'select_account');
   forceConsent = false;
+  authLog(`going to Google sign-in (${qs.get('prompt') || 'hint'}) · returns to ${REDIRECT_URI}`);
   location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + qs);
 }
 // Runs at startup: pick up a token (or error) Google sent back in the URL. Returns what to do next.
@@ -381,14 +397,16 @@ function finishRedirectSignIn() {
   try { saved = JSON.parse(ls.get('oauthState') || 'null'); } catch (_) { /* ignore */ }
   ls.del('oauthState');
   history.replaceState(null, '', location.pathname + ((saved && saved.hash) || '#/timeline'));
-  if (!saved || p.get('state') !== saved.state) return { error: 'Sign-in response didn’t match. Please try again.' };
+  if (!saved || p.get('state') !== saved.state) { authLog(saved ? 'sign-in state mismatch' : 'sign-in returned but no saved state'); return { error: 'Sign-in response didn’t match. Please try again.' }; }
   if (p.get('error')) {
     const err = p.get('error');
+    authLog('Google returned error: ' + err);
     return { error: err === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in failed: ' + err };
   }
   const granted = (p.get('scope') || '').split(' ');
   if (!granted.some(s => s.endsWith('drive.appdata'))) forceConsent = true;
   saveToken(p.get('access_token'), p.get('expires_in') || 3600);
+  authLog(`token saved · drive ${forceConsent ? 'NOT granted' : 'granted'} · ${isInstalled() ? 'in app' : 'in separate window'}`);
   // Finished in a separate browser window instead of the app itself? The app picks the sign-in
   // up from storage; this window just needs closing.
   return { after: saved.after, outside: !!saved.installed && !isInstalled() };
@@ -1016,6 +1034,10 @@ function openSettings() {
   $('#syncToggle').checked = syncOn();
   $('#settingsMsg').textContent = '';
   $('#appVersion').textContent = 'Version ' + APP_VERSION;
+  let log = [];
+  try { log = JSON.parse(ls.get('authLog') || '[]'); } catch (_) { /* ignore */ }
+  $('#authLog').textContent = log.length ? log.join('\n') : '(empty)';
+  $('#authLogBox').hidden = !log.length;
   renderSyncInfo();
   const d = $('#settings');
   if (!d.open) d.showModal();
@@ -1139,6 +1161,7 @@ function wire() {
   // A sign-in that finished in another window of the app: pick it up and sync.
   window.addEventListener('storage', e => {
     if (e.key !== 'gtoken' || !loadStoredToken()) return;
+    authLog('picked up sign-in from another window');
     toast('Signed in to Google.', 2500);
     if (syncOn()) sync(true);
   });
