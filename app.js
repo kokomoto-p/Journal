@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.9';
+const APP_VERSION = '2026-10-28.10';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -38,8 +38,18 @@ const dbp = new Promise((resolve, reject) => {
     const db = rq.result;
     for (const s of ['entries', 'photos', 'thumbs']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id' });
   };
-  rq.onsuccess = () => resolve(rq.result);
+  rq.onsuccess = () => {
+    const db = rq.result;
+    // If a newer version of the app opens in another window, step aside so it isn't stuck waiting.
+    db.onversionchange = () => { db.close(); location.reload(); };
+    resolve(db);
+  };
   rq.onerror = () => reject(rq.error);
+  // An older copy of the app open somewhere (e.g. a Chrome tab) is holding the old storage format.
+  rq.onblocked = () => {
+    authLog('storage upgrade blocked by another open Journal window');
+    toast('Another Journal window is open with an older version (maybe a Chrome tab). Close it, then reopen the app.', 0);
+  };
 });
 function tx(store, mode, fn) {
   return dbp.then(db => new Promise((resolve, reject) => {
@@ -1170,12 +1180,19 @@ function wire() {
 
 /* ===================== boot ===================== */
 (async function init() {
+  // Handle a returning Google sign-in first, before anything that waits, so it's never lost.
+  let signIn = null;
+  try { signIn = finishRedirectSignIn(); }
+  catch (err) { authLog('sign-in handling failed: ' + err.message); signIn = { error: 'Sign-in failed: ' + err.message }; }
   wire();
-  for (const e of await dbAll('entries')) {
+  let all = [];
+  try { all = await dbAll('entries'); }
+  catch (err) { authLog('could not open storage: ' + err.message); toast('Could not open the journal’s storage: ' + err.message, 0); }
+  for (const e of all) {
     if (e.deleted) tombs.set(e.id, e); else cache.set(e.id, norm(e));
   }
+  authLog(`loaded ${cache.size} entries`);
   renderSyncBar();
-  const signIn = finishRedirectSignIn();   // back from Google's sign-in page?
   await route();
   if (signIn && signIn.outside) {
     // The app window picks up the sign-in and syncs on its own; this extra window just needs closing.
