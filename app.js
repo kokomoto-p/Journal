@@ -8,7 +8,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/drive.appdata',
 ].join(' ');
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const APP_VERSION = '2026-10-28.7';
+const APP_VERSION = '2026-10-28.8';
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -334,12 +334,18 @@ function renderOnThisDay() {
 
 /* ===================== Google auth ===================== */
 let tokenClient = null, token = null, tokenExp = 0, pending = null, forceConsent = false;
-try {
-  const s = JSON.parse(ls.get('gtoken') || 'null');
-  if (s && s.exp > Date.now() + 60000) { token = s.t; tokenExp = s.exp; }
-} catch (_) { /* ignore */ }
+// The sign-in may finish in another window of this app (Android does this for installed apps),
+// so always fall back to the copy saved in storage.
+function loadStoredToken() {
+  try {
+    const s = JSON.parse(ls.get('gtoken') || 'null');
+    if (s && s.exp > Date.now() + 60000) { token = s.t; tokenExp = s.exp; return true; }
+  } catch (_) { /* ignore */ }
+  return false;
+}
+loadStoredToken();
 function clearToken() { token = null; tokenExp = 0; ls.del('gtoken'); }
-const hasToken = () => !!token && Date.now() < tokenExp - 60000;
+const hasToken = () => (!!token && Date.now() < tokenExp - 60000) || loadStoredToken();
 function saveToken(t, expiresIn) {
   token = t; tokenExp = Date.now() + Number(expiresIn) * 1000;
   ls.set('gtoken', JSON.stringify({ t: token, exp: tokenExp }));
@@ -353,11 +359,16 @@ const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/,
 function redirectSignIn(after) {
   const cid = ls.get('clientId');
   const state = uuid();
-  ls.set('oauthState', JSON.stringify({ state, after, hash: location.hash || '#/timeline', at: Date.now() }));
+  ls.set('oauthState', JSON.stringify({ state, after, hash: location.hash || '#/timeline', at: Date.now(), installed: isInstalled() }));
   const qs = new URLSearchParams({
     client_id: cid, redirect_uri: REDIRECT_URI, response_type: 'token', scope: SCOPES,
-    include_granted_scopes: 'true', state, prompt: forceConsent ? 'consent' : 'select_account',
+    include_granted_scopes: 'true', state,
   });
+  // Skip the account picker once we know which account you use; ask again only if permissions are missing.
+  const email = ls.get('gEmail');
+  if (forceConsent) qs.set('prompt', 'consent');
+  else if (email) qs.set('login_hint', email);
+  else qs.set('prompt', 'select_account');
   forceConsent = false;
   location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + qs);
 }
@@ -378,7 +389,9 @@ function finishRedirectSignIn() {
   const granted = (p.get('scope') || '').split(' ');
   if (!granted.some(s => s.endsWith('drive.appdata'))) forceConsent = true;
   saveToken(p.get('access_token'), p.get('expires_in') || 3600);
-  return { after: saved.after };
+  // Finished in a separate browser window instead of the app itself? The app picks the sign-in
+  // up from storage; this window just needs closing.
+  return { after: saved.after, outside: !!saved.installed && !isInstalled() };
 }
 
 function getToken(interactive = true, after = '') {
@@ -855,7 +868,7 @@ async function sync(interactive = false) {
     const editsAtStart = editCounter;
     if (!syncInfo.email) {
       gfetch('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)', {}, 'json', interactive)
-        .then(r => { syncInfo.email = r.user?.emailAddress || ''; renderSyncInfo(); }).catch(() => {});
+        .then(r => { syncInfo.email = r.user?.emailAddress || ''; if (syncInfo.email) ls.set('gEmail', syncInfo.email); renderSyncInfo(); }).catch(() => {});
     }
     const files = await listRemote(interactive);
     const rEntries = new Map(), rPhotos = new Map();
@@ -1123,6 +1136,12 @@ function wire() {
     else queueSync(300);
   });
   window.addEventListener('online', () => queueSync(500));
+  // A sign-in that finished in another window of the app: pick it up and sync.
+  window.addEventListener('storage', e => {
+    if (e.key !== 'gtoken' || !loadStoredToken()) return;
+    toast('Signed in to Google.', 2500);
+    if (syncOn()) sync(true);
+  });
   setInterval(() => { if (!document.hidden) queueSync(0); }, 5 * 60 * 1000);
 }
 
@@ -1135,10 +1154,15 @@ function wire() {
   renderSyncBar();
   const signIn = finishRedirectSignIn();   // back from Google's sign-in page?
   await route();
-  if (signIn && signIn.error) toast(signIn.error, 7000);
-  else if (signIn && signIn.after === 'sync') sync(true);
-  else if (signIn) toast('Signed in to Google. Tap the button again to continue.', 5000);
-  if (syncOn() && !(signIn && signIn.after === 'sync')) sync(false);
+  if (signIn && signIn.outside) {
+    // The app window picks up the sign-in and syncs on its own; this extra window just needs closing.
+    toast('Signed in! Close this window to go back to the Journal app.', 0);
+  } else {
+    if (signIn && signIn.error) toast(signIn.error, 7000);
+    else if (signIn && signIn.after === 'sync') sync(true);
+    else if (signIn) toast('Signed in to Google. Tap the button again to continue.', 5000);
+    if (syncOn() && !(signIn && signIn.after === 'sync')) sync(false);
+  }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
